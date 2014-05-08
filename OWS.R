@@ -2,6 +2,7 @@
 require(psych)
 require(xtable)
 require(ascii)
+require(ggplot2)
 require(mvnormtest)
 require(lawstat)
 require(foreign)
@@ -10,7 +11,100 @@ require(car)
 require(lsr)
 require(gvlma)
 require(lattice)
-require(nlme)
+require(lme4)
+
+
+
+o.window <- function(x, window_size, window_overlap=0, FUN, na.rm=T) {
+  x <- as.vector(x)
+  output_length = length(x)/(window_size- window_overlap/2)
+  output = vector(length=output_length)
+  n = 0
+  step = window_size-window_overlap
+  for(i in seq(1,length(x), step)){
+    start = i
+    end = i + step
+    if(end > length(x)){
+      end = length(x)
+    }
+    output[n] <- FUN(x[start:end])
+    n = n+1
+    print(paste("start:",start,"end",end))
+  }
+  
+  return(output)
+}
+
+
+
+
+
+o.pbcopy <- function(x){
+  write.table(file = pipe("pbcopy"), x, sep = "\t",quote=F)
+}
+
+ggCaterpillar <- function(re, QQ=TRUE, likeDotplot=TRUE) {
+  require(ggplot2)
+  f <- function(x) {
+    pv   <- attr(x, "postVar")
+    cols <- 1:(dim(pv)[1])
+    se   <- unlist(lapply(cols, function(i) sqrt(pv[i, i, ])))
+    ord  <- unlist(lapply(x, order)) + rep((0:(ncol(x) - 1)) * nrow(x), each=nrow(x))
+    pDf  <- data.frame(y=unlist(x)[ord],
+                       ci=1.96*se[ord],
+                       nQQ=rep(qnorm(ppoints(nrow(x))), ncol(x)),
+                       ID=factor(rep(rownames(x), ncol(x))[ord], levels=rownames(x)[ord]),
+                       ind=gl(ncol(x), nrow(x), labels=names(x)))
+    
+    if(QQ) {  ## normal QQ-plot
+      p <- ggplot(pDf, aes(nQQ, y))
+      p <- p + facet_wrap(~ ind, scales="free")
+      p <- p + xlab("Standard normal quantiles") + ylab("Random effect quantiles")
+    } else {  ## caterpillar dotplot
+      p <- ggplot(pDf, aes(ID, y)) + coord_flip()
+      if(likeDotplot) {  ## imitate dotplot() -> same scales for random effects
+        p <- p + facet_wrap(~ ind)
+      } else {           ## different scales for random effects
+        p <- p + facet_grid(ind ~ ., scales="free_y")
+      }
+      p <- p + xlab("Levels") + ylab("Random effects")
+    }
+    
+    p <- p + theme(legend.position="none")
+    p <- p + geom_hline(yintercept=0)
+    p <- p + geom_errorbar(aes(ymin=y-ci, ymax=y+ci), width=0, colour="black")
+    p <- p + geom_point(aes(size=1.2), colour="blue") 
+    return(p)
+  }
+  
+  lapply(re, f)
+}
+
+o.center <- function(d){
+  return(d - mean(d, na.rm=T))
+}
+
+r2.corr.mer <- function(m) {
+  lmfit <-  lm(model.response(model.frame(m)) ~ fitted(m))
+  summary(lmfit)$r.squared
+}
+
+o.range <- function(a,na.rm=T){
+  r <- range(a,na.rm=na.rm)
+  return(max(r)-min(r))
+}
+
+parseTime <- function(s){
+  s <- as.character(s)
+  t <- strsplit(s,split=":")[[1]]
+  dur <- as.numeric(t[1]) + as.numeric(t[2])/60.0
+  return(dur)
+  
+}
+
+se <- function(x){sqrt(var(x,na.rm=TRUE)/length(na.omit(x)))}
+
+conf.int <- function(x){return(c(mean(x, na.rm=T)+se(x),mean(x,na.rm=T)-se(x)))}
 
 
 xyplot.lme <- function(formula,data) {
@@ -69,7 +163,8 @@ o.barplot <- function(freqs, main="Distribution",xlab="Group",ylab="Frequency",x
 
 o.scatter <- function(x,y,main="Scatter Plot w/ LOWESS Fit") {
   plot(x,y,main=main, xlab=deparse(substitute(x)),ylab=deparse(substitute(y)))
-  lines(lowess(x,y,f=0.75,iter=5),lwd=3,col="red")
+  try(lines(lowess(x,y,f=0.75,iter=5),lwd=3,col="red"))
+
 }
 
 o.rmcov <- function(model, variable) {
@@ -170,7 +265,10 @@ o.residuals <- function(model,  cd.threshold = 1.0) {
   par(ask=askSetting)
   par(mfrow=c(1,1))
 }
-skew.se <- function(x){
+skew.se <- function(x, na.rm=T){
+  if(na.rm){
+    x = na.omit(x)
+  }
   n = length(x)
   se = 6/sqrt(n)
   return(se)
@@ -480,14 +578,15 @@ o.describe <- function (x, digits = 2,na.rm=TRUE, type = 3, ...)   #basic stats 
   }
   if (is.vector(x) )          #do it for vectors or 
   {
-    stats = matrix(rep(NA,7),ncol=7)    #create a temporary array
+    stats = matrix(rep(NA,8),ncol=8)    #create a temporary array
     stats[1, 1] <-  valid(x )
     stats[1, 2] <-  mean(x, na.rm=na.rm )
     stats[1, 3] <-  sd(x, na.rm=na.rm )
     stats[1, 4] <-  min(x, na.rm=na.rm )
     stats[1, 5] <-  max(x, na.rm=na.rm )
-    stats[1, 6] <-  skew(x,na.rm=na.rm)
-    stats[1, 7] <-  kurtosi(x,na.rm=na.rm)
+    stats[1, 6] <-  skew(x, na.rm=na.rm)
+    stats[1, 7] <-  skew.se(x, na.rm=na.rm)
+    stats[1, 8] <-  kurtosi(x,na.rm=na.rm)
     len <- 1;
   }
   
@@ -495,7 +594,7 @@ o.describe <- function (x, digits = 2,na.rm=TRUE, type = 3, ...)   #basic stats 
   else  {
     len = dim(x)[2]      #do it for matrices or data.frames
     if(is.null(len)){len = 1}
-    stats = matrix(rep(NA,len*7),ncol=7)    #create a temporary array
+    stats = matrix(rep(NA,len*8),ncol=8)    #create a temporary array
     for (i in 1:len) {
       if ((len==1 && is.numeric(x)) || is.numeric(x[,i])) {   #just do this for numeric data
         stats[i, 1] <-  valid(x[,i] )
@@ -504,12 +603,13 @@ o.describe <- function (x, digits = 2,na.rm=TRUE, type = 3, ...)   #basic stats 
         stats[i, 4] <-  min(x[,i], na.rm=na.rm )
         stats[i, 5] <-  max(x[,i], na.rm=na.rm )
         stats[i, 6] <-  skew(x[,i], na.rm=na.rm)
-        stats[i, 7] <-  kurtosi(x[,i], na.rm=na.rm)
+        stats[i, 7] <-  skew.se(x[,i], na.rm=na.rm)
+        stats[i, 8] <-  kurtosi(x[,i], na.rm=na.rm)
       }
     }
   }
-  temp <-  data.frame(n = stats[,1],mean = stats[,2], sd = stats[,3], min= stats[,4],max=stats[,5],skew = stats[, 6],kurtosis=stats[,7])
-  answer <-  round(data.frame(temp),  digits) #, se = temp$sd/sqrt(temp$n)
+  temp <-  data.frame(n = stats[,1],mean = stats[,2], se = stats[,3]/sqrt(stats[,1]), sd = stats[,3], min= stats[,4],max=stats[,5],skew = stats[, 6],skew.se = stats[,7],kurtosis=stats[,8],kurtosis.se=se(stats[,8]))
+  answer <-  round(data.frame(temp),  digits) 
   rownames(answer) <- colnames(x)
   return(answer)
 }
@@ -641,7 +741,7 @@ o.isnorm <- function(y,sig=0.05,n_threshold=30) {
     print("Shaprio test requires N > 2",quote=FALSE)
     return(FALSE)
   }
-  isnorm <- shapiro.test(y)
+  isnorm <- shapiro.test(na.omit(y))
   print(isnorm)
   if(isnorm["p.value"] < sig){
     print(sprintf("Since p=%f is less than threshold of %0.2f, we can reject H0 and conclude that distribution IS NOT normal.",isnorm["p.value"],sig), quote=FALSE)
