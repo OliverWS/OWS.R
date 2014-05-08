@@ -29,7 +29,6 @@ o.window <- function(x, window_size, window_overlap=0, FUN, na.rm=T) {
     }
     output[n] <- FUN(x[start:end])
     n = n+1
-    print(paste("start:",start,"end",end))
   }
   
   return(output)
